@@ -1,0 +1,42 @@
+name: Validate VKS OIDC Authentication
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write  # Mandatory to request the OIDC JWT
+  contents: read
+
+jobs:
+  test-k8s-oidc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch GitHub OIDC ID Token
+        uses: actions/github-script@v7
+        id: oidc
+        with:
+          script: |
+            const token = await core.getIDToken('github-test-cluster');
+            core.setOutput('token', token);
+
+      - name: Validate Authentication via SelfSubjectReview & List Nodes
+        env:
+          APISERVER_ENDPOINT: "${{ secrets.K8S_API_URL }}"
+          ID_TOKEN: "${{ steps.oidc.outputs.token }}"
+        run: |
+          # 1. Test identity mapping recognized by the API Server
+          echo "=== 1. Checking Authenticated Identity ==="
+          kubectl --server="$APISERVER_ENDPOINT" \
+            --token="$ID_TOKEN" \
+            --insecure-skip-tls-verify \
+            create -f - -o yaml <<EOF
+          apiVersion: authentication.k8s.io/v1
+          kind: SelfSubjectReview
+          EOF
+
+          # 2. Test RBAC permissions to get nodes
+          echo "=== 2. Testing RBAC (get nodes) ==="
+          kubectl --server="$APISERVER_ENDPOINT" \
+            --token="$ID_TOKEN" \
+            --insecure-skip-tls-verify \
+            get nodes
